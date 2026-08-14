@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.reporting import write_report_tree
-
+from tradingagents.dataflows.errors import NoMarketDataError
+from tradingagents.dataflows.stockstats_utils import load_ohlcv
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -19,6 +20,72 @@ def parse_args():
     parser.add_argument("--output-dir", default="reports")
     return parser.parse_args()
 
+def validate_market_data(
+    ticker: str,
+    analysis_date: str,
+    cache_dir: Path,
+    max_attempts: int = 3,
+) -> None:
+    print(
+        f"Preflight market data check: "
+        f"{ticker} @ {analysis_date}"
+    )
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            data = load_ohlcv(
+                ticker,
+                analysis_date,
+            )
+
+            if data.empty:
+                raise RuntimeError(
+                    f"No OHLCV rows returned for {ticker}."
+                )
+
+            latest_date = data["Date"].max()
+
+            print(
+                "Market data preflight OK: "
+                f"{ticker}, latest={latest_date}"
+            )
+
+            return
+
+        except NoMarketDataError as exc:
+            print(
+                f"Market data attempt "
+                f"{attempt}/{max_attempts} failed: "
+                f"{exc}"
+            )
+
+            stale_files = list(
+                cache_dir.glob(
+                    "*-YFin-data-*.csv"
+                )
+            )
+
+            for cache_file in stale_files:
+                print(
+                    f"Removing cached market data: "
+                    f"{cache_file}"
+                )
+
+                cache_file.unlink(
+                    missing_ok=True
+                )
+
+            if attempt >= max_attempts:
+                raise
+
+            time.sleep(
+                attempt * 3
+            )
+
+    raise RuntimeError(
+        f"Unable to obtain fresh market data "
+        f"for {ticker}."
+    )
 
 def main():
     args = parse_args()
@@ -164,6 +231,12 @@ def main():
     print("=" * 70)
 
     try:
+        validate_market_data(
+            ticker=ticker,
+            analysis_date=analysis_date,
+            cache_dir=cache_dir,
+        )
+
         graph = TradingAgentsGraph(
             selected_analysts=analysts,
             debug=False,
