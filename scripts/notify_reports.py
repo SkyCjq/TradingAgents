@@ -200,6 +200,99 @@ def build_summary(
 
     return title, "\n".join(lines)
 
+def build_email_summary(
+    title: str,
+    results: list[dict],
+) -> str:
+    now = datetime.now(
+        ZoneInfo("America/New_York")
+    )
+
+    success_count = sum(
+        1
+        for item in results
+        if item["status"] == "success"
+    )
+
+    failed_count = len(results) - success_count
+
+    lines = [
+        f"# 📈 {title}",
+        "",
+        f"> 推送时间：{now.strftime('%Y-%m-%d %H:%M:%S')} ET",
+        f"> 标的数量：{len(results)}",
+        f"> 成功：{success_count}｜失败：{failed_count}",
+        "",
+        "---",
+        "",
+    ]
+
+    for item in results:
+        ticker = item["ticker"]
+        status = item["status"]
+        status_icon = "✅" if status == "success" else "❌"
+
+        lines.extend(
+            [
+                f"# {status_icon} {ticker}",
+                "",
+                f"**状态：** {status}",
+                "",
+            ]
+        )
+
+        if status == "success":
+            lines.extend(
+                [
+                    "## 最终决策",
+                    "",
+                    item["decision"].strip() or "未获取最终决策",
+                    "",
+                    "## III. Trading Team Plan",
+                    "",
+                    "### Trader",
+                    "",
+                    item["trading_plan"].strip()
+                    or "未获取 Trading Team Plan",
+                    "",
+                ]
+            )
+        else:
+            error_tail = "\n".join(
+                item["error"].splitlines()[-20:]
+            )
+
+            lines.extend(
+                [
+                    "## 分析失败",
+                    "",
+                    "```text",
+                    error_tail or "未获取错误信息",
+                    "```",
+                    "",
+                ]
+            )
+
+        lines.extend(
+            [
+                "---",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## 报告说明",
+            "",
+            "- 邮件正文包含最终决策和 Trading Team Plan。",
+            "- 完整 Analyst / Research / Risk / Portfolio 报告请查看 ZIP 附件。",
+            "- 完整报告同时保存在 GitHub Artifact 和 Backblaze B2。",
+            "- 本报告仅用于研究，不构成投资建议。",
+            "",
+        ]
+    )
+
+    return "\n".join(lines)
 
 def split_utf8_bytes(
     text: str,
@@ -552,11 +645,26 @@ def main() -> None:
         results
     )
 
+    email_summary = build_email_summary(
+        title,
+        results,
+    )
+
     summary_path = (
         OUTPUT_DIR
         / "daily_summary.md"
     )
 
+    email_summary_path = (
+        OUTPUT_DIR
+        / "email_summary.md"
+    )
+
+    email_summary_path.write_text(
+        email_summary,
+        encoding="utf-8",
+    )
+    
     summary_path.write_text(
         summary,
         encoding="utf-8",
@@ -576,7 +684,7 @@ def main() -> None:
 
     gmail_ok = send_gmail(
         title,
-        summary,
+        email_summary,
         zip_path,
     )
 
