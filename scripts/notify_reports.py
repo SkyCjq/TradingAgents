@@ -581,15 +581,14 @@ def main():
     )
 
     if not dingtalk_ok:
-        raise RuntimeError(
-            "DingTalk notification failed."
-        )
+        print(
+            "::warning::DingTalk notification failed."
+    )
 
     if not gmail_ok:
-        raise RuntimeError(
-            "Gmail notification failed."
-        )
-
+        print(
+            "::warning::Gmail notification failed."
+    )
 
 if __name__ == "__main__":
     main()
