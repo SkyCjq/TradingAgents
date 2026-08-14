@@ -3,7 +3,6 @@ name: TradingAgents Daily Analysis
 on:
   workflow_dispatch:
     inputs:
-
       tickers:
         description: "Comma-separated tickers; empty = default watchlist"
         required: false
@@ -43,7 +42,7 @@ concurrency:
 jobs:
 
   # ============================================================
-  # PREPARE
+  # 1. PREPARE
   # ============================================================
 
   prepare:
@@ -57,9 +56,8 @@ jobs:
       matrix: ${{ steps.prepare.outputs.matrix }}
 
     steps:
-
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -70,6 +68,7 @@ jobs:
 
       - name: Build ticker matrix
         id: prepare
+
         shell: python
 
         env:
@@ -141,26 +140,34 @@ jobs:
 
 
           if manual_date:
-              analysis_date = manual_date
+              analysis_date = (
+                  manual_date
+              )
           else:
-              analysis_date = datetime.now(
-                  ZoneInfo(
-                      "America/New_York"
+              analysis_date = (
+                  datetime.now(
+                      ZoneInfo(
+                          "America/New_York"
+                      )
+                  ).strftime(
+                      "%Y-%m-%d"
                   )
-              ).strftime("%Y-%m-%d")
+              )
 
 
           nyse = mcal.get_calendar(
               "NYSE"
           )
 
-          schedule = nyse.schedule(
-              start_date=analysis_date,
-              end_date=analysis_date,
+          market_schedule = (
+              nyse.schedule(
+                  start_date=analysis_date,
+                  end_date=analysis_date,
+              )
           )
 
           is_trading_day = (
-              not schedule.empty
+              not market_schedule.empty
           )
 
 
@@ -182,7 +189,8 @@ jobs:
 
 
           print(
-              f"Date: {analysis_date}"
+              f"Analysis date: "
+              f"{analysis_date}"
           )
 
           print(
@@ -196,7 +204,8 @@ jobs:
           )
 
           print(
-              f"Tickers: {tickers}"
+              f"Tickers: "
+              f"{tickers}"
           )
 
 
@@ -206,99 +215,106 @@ jobs:
               ],
               "a",
               encoding="utf-8",
-          ) as f:
-
-              f.write(
+          ) as output_file:
+              output_file.write(
                   f"analysis_date="
                   f"{analysis_date}\n"
               )
 
-              f.write(
+              output_file.write(
                   f"should_run="
                   f"{str(should_run).lower()}\n"
               )
 
-              f.write(
+              output_file.write(
                   "matrix="
-                  + json.dumps(matrix)
+                  + json.dumps(
+                      matrix
+                  )
                   + "\n"
               )
 
 
   # ============================================================
-  # ANALYSIS
+  # 2. ANALYZE
   # ============================================================
 
   analyze:
-
     name: Analyze ${{ matrix.ticker }}
 
     needs:
       - prepare
 
-    if: >
-      needs.prepare.outputs.should_run
-      == 'true'
+    if: needs.prepare.outputs.should_run == 'true'
 
     runs-on: ubuntu-latest
 
     timeout-minutes: 330
 
     strategy:
-
       fail-fast: false
 
+      # 初始建议同时最多跑 3 个 ticker
       max-parallel: 3
 
-      matrix: >
-        ${{ fromJSON(
-          needs.prepare.outputs.matrix
-        ) }}
-
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
     env:
+      # --------------------------------------------------------
+      # DeepSeek
+      #
+      # IMPORTANT:
+      # 不要改成：
+      #
+      # DEEPSEEK_API_KEY: >
+      #   ${{ secrets.DEEPSEEK_API_KEY }}
+      #
+      # Secret 必须保持单行。
+      # --------------------------------------------------------
 
-      DEEPSEEK_API_KEY: >
-        ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
-      TRADINGAGENTS_LLM_PROVIDER:
-        deepseek
+      TRADINGAGENTS_LLM_PROVIDER: deepseek
 
-      TRADINGAGENTS_QUICK_THINK_LLM:
-        deepseek-v4-flash
+      TRADINGAGENTS_QUICK_THINK_LLM: deepseek-v4-flash
 
-      TRADINGAGENTS_DEEP_THINK_LLM:
-        deepseek-v4-pro
+      TRADINGAGENTS_DEEP_THINK_LLM: deepseek-v4-pro
 
-      TRADINGAGENTS_OUTPUT_LANGUAGE:
-        Chinese
+      TRADINGAGENTS_OUTPUT_LANGUAGE: Chinese
 
-      TRADINGAGENTS_MAX_DEBATE_ROUNDS:
-        "1"
+      TRADINGAGENTS_MAX_DEBATE_ROUNDS: "1"
 
-      TRADINGAGENTS_MAX_RISK_ROUNDS:
-        "1"
+      TRADINGAGENTS_MAX_RISK_ROUNDS: "1"
 
-      TRADINGAGENTS_CHECKPOINT_ENABLED:
-        "true"
+      TRADINGAGENTS_CHECKPOINT_ENABLED: "true"
 
-      TRADINGAGENTS_LLM_MAX_RETRIES:
-        "3"
+      TRADINGAGENTS_LLM_MAX_RETRIES: "3"
 
 
     steps:
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
+
+      # --------------------------------------------------------
+      # Python
+      # --------------------------------------------------------
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
 
         with:
           python-version: "3.12"
           cache: "pip"
 
+
+      # --------------------------------------------------------
+      # Install
+      # --------------------------------------------------------
 
       - name: Install TradingAgents
         run: |
@@ -306,68 +322,146 @@ jobs:
           pip install .
 
 
+      # --------------------------------------------------------
+      # Validate DeepSeek Secret
+      #
+      # 不打印 Key 本身。
+      # 只检查：
+      # - 是否为空
+      # - 首尾空格
+      # - CR / LF / TAB
+      #
+      # 这一步用于提前阻止：
+      #
+      # LocalProtocolError:
+      # Illegal header value
+      # --------------------------------------------------------
+
+      - name: Validate DeepSeek configuration
+        shell: python
+
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+        run: |
+          import os
+
+
+          key = os.environ.get(
+              "DEEPSEEK_API_KEY",
+              "",
+          )
+
+
+          if not key:
+              raise SystemExit(
+                  "DEEPSEEK_API_KEY "
+                  "is empty or missing."
+              )
+
+
+          if key != key.strip():
+              raise SystemExit(
+                  "DEEPSEEK_API_KEY "
+                  "contains leading or "
+                  "trailing whitespace."
+              )
+
+
+          illegal_chars = [
+              char
+              for char in (
+                  "\r",
+                  "\n",
+                  "\t",
+              )
+              if char in key
+          ]
+
+
+          if illegal_chars:
+              raise SystemExit(
+                  "DEEPSEEK_API_KEY "
+                  "contains CR/LF/TAB "
+                  "characters."
+              )
+
+
+          print(
+              "DeepSeek secret OK. "
+              f"Length={len(key)}"
+          )
+
+
+      # --------------------------------------------------------
+      # Restore per-ticker memory/cache
+      # --------------------------------------------------------
+
       - name: Restore ticker state
-        uses: actions/cache@v4
+        uses: actions/cache@v5
 
         with:
+          path: state/${{ matrix.ticker }}
 
-          path: |
-            state/${{ matrix.ticker }}
-
-          key: >
-            tradingagents-state-
-            ${{ matrix.ticker }}-
-            ${{ needs.prepare.outputs.analysis_date }}-
-            ${{ github.run_id }}
+          key: tradingagents-state-${{ matrix.ticker }}-${{ needs.prepare.outputs.analysis_date }}-${{ github.run_id }}
 
           restore-keys: |
             tradingagents-state-${{ matrix.ticker }}-
 
 
+      # --------------------------------------------------------
+      # Prepare local state folders
+      # --------------------------------------------------------
+
       - name: Prepare state
-
         run: |
-
           mkdir -p \
             "state/${{ matrix.ticker }}/cache" \
             "state/${{ matrix.ticker }}/memory" \
             "state/${{ matrix.ticker }}/logs"
 
 
+      # --------------------------------------------------------
+      # Run TradingAgents
+      #
+      # IMPORTANT:
+      # 这里也不使用 YAML >
+      # 避免路径尾部进入换行符。
+      # --------------------------------------------------------
+
       - name: Run analysis
-
         env:
+          TRADINGAGENTS_CACHE_DIR: ${{ github.workspace }}/state/${{ matrix.ticker }}/cache
 
-          TRADINGAGENTS_CACHE_DIR: >
-            ${{ github.workspace }}/state/${{ matrix.ticker }}/cache
+          TRADINGAGENTS_MEMORY_LOG_PATH: ${{ github.workspace }}/state/${{ matrix.ticker }}/memory/trading_memory.md
 
-          TRADINGAGENTS_MEMORY_LOG_PATH: >
-            ${{ github.workspace }}/state/${{ matrix.ticker }}/memory/trading_memory.md
-
-          TRADINGAGENTS_RESULTS_DIR: >
-            ${{ github.workspace }}/state/${{ matrix.ticker }}/logs
+          TRADINGAGENTS_RESULTS_DIR: ${{ github.workspace }}/state/${{ matrix.ticker }}/logs
 
         run: |
-
           python scripts/run_headless_analysis.py \
             --ticker "${{ matrix.ticker }}" \
             --date "${{ needs.prepare.outputs.analysis_date }}" \
             --output-dir "reports"
 
 
-      - name: Upload report
+      # --------------------------------------------------------
+      # Upload ticker report
+      #
+      # always():
+      # 即使 TradingAgents 分析失败，
+      # metadata.json / error.txt 仍然上传，
+      # 方便排障。
+      # --------------------------------------------------------
 
+      - name: Upload report
         if: always()
 
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
 
         with:
+          name: report-${{ matrix.ticker }}-${{ needs.prepare.outputs.analysis_date }}
 
-          name: >
-            report-${{ matrix.ticker }}-${{ needs.prepare.outputs.analysis_date }}
-
-          path: |
-            reports/${{ matrix.ticker }}/
+          path: reports/${{ matrix.ticker }}/
 
           if-no-files-found: warn
 
@@ -375,36 +469,41 @@ jobs:
 
 
   # ============================================================
-  # AGGREGATION AND NOTIFICATION
+  # 3. AGGREGATE + NOTIFY
   # ============================================================
 
   notify:
-
     name: Aggregate & Notify
 
     needs:
       - prepare
       - analyze
 
-    if: >
-      always()
-      && needs.prepare.outputs.should_run
-      == 'true'
+    # 即使某一只股票分析失败，
+    # 仍然执行汇总，
+    # 这样钉钉/Gmail 可以看到失败 ticker。
+    if: always() && needs.prepare.outputs.should_run == 'true'
 
     runs-on: ubuntu-latest
 
 
     steps:
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
+
+      # --------------------------------------------------------
+      # Download all matrix artifacts
+      # --------------------------------------------------------
 
       - name: Download ticker reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
         with:
-
           pattern: report-*
 
           path: collected-reports
@@ -412,57 +511,68 @@ jobs:
           merge-multiple: false
 
 
+      # --------------------------------------------------------
+      # Python
+      # --------------------------------------------------------
+
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
 
         with:
           python-version: "3.12"
 
 
-      - name: Install notification dependencies
+      # --------------------------------------------------------
+      # Notification dependencies
+      # --------------------------------------------------------
 
+      - name: Install notification dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install requests
 
 
-      - name: Send Gmail and DingTalk
+      # --------------------------------------------------------
+      # Gmail + DingTalk
+      #
+      # schedule:
+      #   自动发送
+      #
+      # workflow_dispatch:
+      #   notify=true 时发送
+      #
+      # Secret 全部使用单行值。
+      # --------------------------------------------------------
 
-        if: >
-          github.event_name == 'schedule'
-          || github.event.inputs.notify == 'true'
+      - name: Send Gmail and DingTalk
+        if: github.event_name == 'schedule' || github.event.inputs.notify == 'true'
 
         env:
+          DINGTALK_WEBHOOK_URL: ${{ secrets.DINGTALK_WEBHOOK_URL }}
 
-          DINGTALK_WEBHOOK_URL: >
-            ${{ secrets.DINGTALK_WEBHOOK_URL }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
 
-          DINGTALK_SECRET: >
-            ${{ secrets.DINGTALK_SECRET }}
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
 
-          GMAIL_SENDER: >
-            ${{ secrets.GMAIL_SENDER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
 
-          GMAIL_APP_PASSWORD: >
-            ${{ secrets.GMAIL_APP_PASSWORD }}
-
-          GMAIL_RECEIVER: >
-            ${{ secrets.GMAIL_RECEIVER }}
+          GMAIL_RECEIVER: ${{ secrets.GMAIL_RECEIVER }}
 
         run: |
-
           python scripts/notify_reports.py
 
 
-      - name: Upload combined reports
+      # --------------------------------------------------------
+      # Upload combined result
+      # --------------------------------------------------------
 
+      - name: Upload combined reports
         if: always()
 
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
 
         with:
-
-          name: >
-            all-reports-${{ needs.prepare.outputs.analysis_date }}
+          name: all-reports-${{ needs.prepare.outputs.analysis_date }}
 
           path: |
             collected-reports/
