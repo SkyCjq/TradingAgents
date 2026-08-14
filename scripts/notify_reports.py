@@ -57,7 +57,7 @@ def collect_results() -> list[dict]:
             if error_path.exists()
             else ""
         )
-        
+
         trading_plan = (
             trading_plan_path.read_text(encoding="utf-8").strip()
             if trading_plan_path.exists()
@@ -664,7 +664,7 @@ def main() -> None:
         email_summary,
         encoding="utf-8",
     )
-    
+
     summary_path.write_text(
         summary,
         encoding="utf-8",
