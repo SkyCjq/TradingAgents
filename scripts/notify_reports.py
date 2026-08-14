@@ -44,6 +44,7 @@ def collect_results() -> list[dict]:
         decision_path = run_dir / "decision.txt"
         error_path = run_dir / "error.txt"
         report_path = run_dir / "complete_report.md"
+        trading_plan_path = run_dir / "3_trading" / "trader.md"
 
         decision = (
             decision_path.read_text(encoding="utf-8").strip()
@@ -56,6 +57,12 @@ def collect_results() -> list[dict]:
             if error_path.exists()
             else ""
         )
+        
+        trading_plan = (
+            trading_plan_path.read_text(encoding="utf-8").strip()
+            if trading_plan_path.exists()
+            else ""
+        )
 
         results.append(
             {
@@ -64,6 +71,7 @@ def collect_results() -> list[dict]:
                 "status": status,
                 "decision": decision,
                 "error": error,
+                "trading_plan": trading_plan,
                 "report_path": str(report_path) if report_path.exists() else "",
             }
         )
