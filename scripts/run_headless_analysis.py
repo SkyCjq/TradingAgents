@@ -61,14 +61,12 @@ def validate_market_data(
             )
 
             stale_files = list(
-                cache_dir.glob(
-                    "*-YFin-data-*.csv"
-                )
+                cache_dir.glob("*-YFin-data-*.csv")
             )
 
             for cache_file in stale_files:
                 print(
-                    f"Removing cached market data: "
+                    "Removing cached market data: "
                     f"{cache_file}"
                 )
 
@@ -79,13 +77,10 @@ def validate_market_data(
             if attempt >= max_attempts:
                 raise
 
-            time.sleep(
-                attempt * 3
-            )
+            time.sleep(attempt * 3)
 
     raise RuntimeError(
-        f"Unable to obtain fresh market data "
-        f"for {ticker}."
+        f"Unable to obtain fresh market data for {ticker}."
     )
 
 def main():
@@ -232,6 +227,15 @@ def main():
     print("=" * 70)
 
     try:
+        cache_dir = Path(
+            config["data_cache_dir"]
+        )
+
+        cache_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         validate_market_data(
             ticker=ticker,
             analysis_date=analysis_date,
