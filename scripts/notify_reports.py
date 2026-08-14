@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-
 REPORT_ROOT = Path("collected-reports")
 OUTPUT_DIR = Path("notification-output")
 
