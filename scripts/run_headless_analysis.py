@@ -14,6 +14,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.reporting import write_report_tree
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", required=True)
