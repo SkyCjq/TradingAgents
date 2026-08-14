@@ -467,9 +467,8 @@ jobs:
 
           retention-days: 30
 
-
   # ============================================================
-  # 3. AGGREGATE + NOTIFY
+  # 3. AGGREGATE + B2 + NOTIFY
   # ============================================================
 
   notify:
@@ -480,12 +479,10 @@ jobs:
       - analyze
 
     # 即使某一只股票分析失败，
-    # 仍然执行汇总，
-    # 这样钉钉/Gmail 可以看到失败 ticker。
+    # 仍然执行汇总。
     if: always() && needs.prepare.outputs.should_run == 'true'
 
     runs-on: ubuntu-latest
-
 
     steps:
       # --------------------------------------------------------
@@ -497,7 +494,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Download all matrix artifacts
+      # 下载全部股票 Artifact
       # --------------------------------------------------------
 
       - name: Download ticker reports
@@ -523,13 +520,108 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Notification dependencies
+      # 通知依赖
       # --------------------------------------------------------
 
       - name: Install notification dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
+
+
+      # --------------------------------------------------------
+      # 检查 AWS CLI
+      #
+      # Backblaze B2 使用 S3-Compatible API，
+      # 因此直接使用 AWS CLI。
+      # --------------------------------------------------------
+
+      - name: Check AWS CLI
+        run: |
+          aws --version
+
+
+      # --------------------------------------------------------
+      # 上传 TradingAgents 报告到 Backblaze B2
+      #
+      # GitHub Secret:
+      #   B2_KEY_ID
+      #       ↓
+      #   AWS_ACCESS_KEY_ID
+      #
+      #   B2_APPLICATION_KEY
+      #       ↓
+      #   AWS_SECRET_ACCESS_KEY
+      #
+      # 注意：
+      # Secret 只暴露给这个 step，
+      # 不设置为整个 job 的环境变量。
+      # --------------------------------------------------------
+
+      - name: Archive reports to Backblaze B2
+
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.B2_KEY_ID }}
+
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+
+          AWS_DEFAULT_REGION: ${{ secrets.B2_REGION }}
+
+          B2_BUCKET: ${{ secrets.B2_BUCKET }}
+
+          B2_ENDPOINT: ${{ secrets.B2_ENDPOINT }}
+
+          B2_REGION: ${{ secrets.B2_REGION }}
+
+          ANALYSIS_DATE: ${{ needs.prepare.outputs.analysis_date }}
+
+        run: |
+          set -euo pipefail
+
+          echo "Preparing Backblaze B2 archive..."
+
+          if [ -z "${B2_BUCKET}" ]; then
+            echo "::error::B2_BUCKET is empty."
+            exit 1
+          fi
+
+          if [ -z "${B2_ENDPOINT}" ]; then
+            echo "::error::B2_ENDPOINT is empty."
+            exit 1
+          fi
+
+          if [ -z "${B2_REGION}" ]; then
+            echo "::error::B2_REGION is empty."
+            exit 1
+          fi
+
+          if [ -z "${AWS_ACCESS_KEY_ID}" ]; then
+            echo "::error::B2_KEY_ID is empty."
+            exit 1
+          fi
+
+          if [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
+            echo "::error::B2_APPLICATION_KEY is empty."
+            exit 1
+          fi
+
+          YEAR="${ANALYSIS_DATE:0:4}"
+          MONTH="${ANALYSIS_DATE:5:2}"
+
+          DESTINATION="s3://${B2_BUCKET}/tradingagents/reports/${YEAR}/${MONTH}/${ANALYSIS_DATE}/"
+
+          echo "Analysis date: ${ANALYSIS_DATE}"
+          echo "B2 region: ${B2_REGION}"
+          echo "B2 destination: ${DESTINATION}"
+
+          aws s3 sync \
+            "collected-reports/" \
+            "${DESTINATION}" \
+            --endpoint-url "${B2_ENDPOINT}" \
+            --region "${B2_REGION}" \
+            --only-show-errors
+
+          echo "Backblaze B2 archive completed."
 
 
       # --------------------------------------------------------
@@ -540,11 +632,10 @@ jobs:
       #
       # workflow_dispatch:
       #   notify=true 时发送
-      #
-      # Secret 全部使用单行值。
       # --------------------------------------------------------
 
       - name: Send Gmail and DingTalk
+
         if: github.event_name == 'schedule' || github.event.inputs.notify == 'true'
 
         env:
@@ -563,7 +654,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Upload combined result
+      # GitHub Artifact 继续保留
       # --------------------------------------------------------
 
       - name: Upload combined reports
