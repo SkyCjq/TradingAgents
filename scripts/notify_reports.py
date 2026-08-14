@@ -5,10 +5,10 @@ import os
 import shutil
 import smtplib
 import time
-import urllib.parse
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
+from urllib import parse
 from zoneinfo import ZoneInfo
 
 import requests
@@ -249,10 +249,8 @@ def build_dingtalk_url(
         digestmod=hashlib.sha256,
     ).digest()
 
-    sign = urllib.parse.quote_plus(
-        base64.b64encode(
-            hmac_code
-        )
+    sign = parse.quote_plus(
+        base64.b64encode(hmac_code)
     )
 
     separator = (
