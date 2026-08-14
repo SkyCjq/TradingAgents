@@ -1,0 +1,473 @@
+name: TradingAgents Daily Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      tickers:
+        description: "Comma-separated tickers; empty = default watchlist"
+        required: false
+        default: ""
+
+      analysis_date:
+        description: "YYYY-MM-DD; empty = current date in New York"
+        required: false
+        default: ""
+
+      force_run:
+        description: "Run even if not an NYSE trading day"
+        required: false
+        type: boolean
+        default: false
+
+      notify:
+        description: "Send Gmail and DingTalk notifications"
+        required: false
+        type: boolean
+        default: true
+
+  schedule:
+    - cron: "15 17 * * 1-5"
+      timezone: "America/New_York"
+
+
+permissions:
+  contents: read
+
+
+concurrency:
+  group: tradingagents-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+
+jobs:
+
+  # ============================================================
+  # PREPARE
+  # ============================================================
+
+  prepare:
+    name: Prepare
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      should_run: ${{ steps.prepare.outputs.should_run }}
+      analysis_date: ${{ steps.prepare.outputs.analysis_date }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+
+    steps:
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install NYSE calendar
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas_market_calendars
+
+      - name: Build ticker matrix
+        id: prepare
+        shell: python
+
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_TICKERS: ${{ github.event.inputs.tickers }}
+          MANUAL_DATE: ${{ github.event.inputs.analysis_date }}
+          FORCE_RUN: ${{ github.event.inputs.force_run }}
+
+        run: |
+          import json
+          import os
+
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          import pandas_market_calendars as mcal
+
+
+          DEFAULT_TICKERS = [
+              "PDD",
+              "AAPL",
+              "GOOGL",
+              "MSFT",
+              "NVDA",
+              "NIO",
+              "TSLA",
+              "META",
+              "QQQ",
+              "NVO",
+              "MSTR",
+              "SPCX",
+              "CRCL",
+          ]
+
+
+          event_name = os.getenv(
+              "EVENT_NAME",
+              "",
+          )
+
+          manual_tickers = os.getenv(
+              "MANUAL_TICKERS",
+              "",
+          ).strip()
+
+          manual_date = os.getenv(
+              "MANUAL_DATE",
+              "",
+          ).strip()
+
+          force_run = (
+              os.getenv(
+                  "FORCE_RUN",
+                  "false",
+              ).lower()
+              == "true"
+          )
+
+
+          if manual_tickers:
+              tickers = [
+                  item.strip().upper()
+                  for item
+                  in manual_tickers.split(",")
+                  if item.strip()
+              ]
+          else:
+              tickers = DEFAULT_TICKERS
+
+
+          if manual_date:
+              analysis_date = manual_date
+          else:
+              analysis_date = datetime.now(
+                  ZoneInfo(
+                      "America/New_York"
+                  )
+              ).strftime("%Y-%m-%d")
+
+
+          nyse = mcal.get_calendar(
+              "NYSE"
+          )
+
+          schedule = nyse.schedule(
+              start_date=analysis_date,
+              end_date=analysis_date,
+          )
+
+          is_trading_day = (
+              not schedule.empty
+          )
+
+
+          if (
+              event_name
+              == "workflow_dispatch"
+              and force_run
+          ):
+              should_run = True
+          else:
+              should_run = (
+                  is_trading_day
+              )
+
+
+          matrix = {
+              "ticker": tickers,
+          }
+
+
+          print(
+              f"Date: {analysis_date}"
+          )
+
+          print(
+              f"NYSE trading day: "
+              f"{is_trading_day}"
+          )
+
+          print(
+              f"Should run: "
+              f"{should_run}"
+          )
+
+          print(
+              f"Tickers: {tickers}"
+          )
+
+
+          with open(
+              os.environ[
+                  "GITHUB_OUTPUT"
+              ],
+              "a",
+              encoding="utf-8",
+          ) as f:
+
+              f.write(
+                  f"analysis_date="
+                  f"{analysis_date}\n"
+              )
+
+              f.write(
+                  f"should_run="
+                  f"{str(should_run).lower()}\n"
+              )
+
+              f.write(
+                  "matrix="
+                  + json.dumps(matrix)
+                  + "\n"
+              )
+
+
+  # ============================================================
+  # ANALYSIS
+  # ============================================================
+
+  analyze:
+
+    name: Analyze ${{ matrix.ticker }}
+
+    needs:
+      - prepare
+
+    if: >
+      needs.prepare.outputs.should_run
+      == 'true'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 330
+
+    strategy:
+
+      fail-fast: false
+
+      max-parallel: 3
+
+      matrix: >
+        ${{ fromJSON(
+          needs.prepare.outputs.matrix
+        ) }}
+
+
+    env:
+
+      DEEPSEEK_API_KEY: >
+        ${{ secrets.DEEPSEEK_API_KEY }}
+
+      TRADINGAGENTS_LLM_PROVIDER:
+        deepseek
+
+      TRADINGAGENTS_QUICK_THINK_LLM:
+        deepseek-v4-flash
+
+      TRADINGAGENTS_DEEP_THINK_LLM:
+        deepseek-v4-pro
+
+      TRADINGAGENTS_OUTPUT_LANGUAGE:
+        Chinese
+
+      TRADINGAGENTS_MAX_DEBATE_ROUNDS:
+        "1"
+
+      TRADINGAGENTS_MAX_RISK_ROUNDS:
+        "1"
+
+      TRADINGAGENTS_CHECKPOINT_ENABLED:
+        "true"
+
+      TRADINGAGENTS_LLM_MAX_RETRIES:
+        "3"
+
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+
+      - name: Install TradingAgents
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+
+      - name: Restore ticker state
+        uses: actions/cache@v4
+
+        with:
+
+          path: |
+            state/${{ matrix.ticker }}
+
+          key: >
+            tradingagents-state-
+            ${{ matrix.ticker }}-
+            ${{ needs.prepare.outputs.analysis_date }}-
+            ${{ github.run_id }}
+
+          restore-keys: |
+            tradingagents-state-${{ matrix.ticker }}-
+
+
+      - name: Prepare state
+
+        run: |
+
+          mkdir -p \
+            "state/${{ matrix.ticker }}/cache" \
+            "state/${{ matrix.ticker }}/memory" \
+            "state/${{ matrix.ticker }}/logs"
+
+
+      - name: Run analysis
+
+        env:
+
+          TRADINGAGENTS_CACHE_DIR: >
+            ${{ github.workspace }}/state/${{ matrix.ticker }}/cache
+
+          TRADINGAGENTS_MEMORY_LOG_PATH: >
+            ${{ github.workspace }}/state/${{ matrix.ticker }}/memory/trading_memory.md
+
+          TRADINGAGENTS_RESULTS_DIR: >
+            ${{ github.workspace }}/state/${{ matrix.ticker }}/logs
+
+        run: |
+
+          python scripts/run_headless_analysis.py \
+            --ticker "${{ matrix.ticker }}" \
+            --date "${{ needs.prepare.outputs.analysis_date }}" \
+            --output-dir "reports"
+
+
+      - name: Upload report
+
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: >
+            report-${{ matrix.ticker }}-${{ needs.prepare.outputs.analysis_date }}
+
+          path: |
+            reports/${{ matrix.ticker }}/
+
+          if-no-files-found: warn
+
+          retention-days: 30
+
+
+  # ============================================================
+  # AGGREGATION AND NOTIFICATION
+  # ============================================================
+
+  notify:
+
+    name: Aggregate & Notify
+
+    needs:
+      - prepare
+      - analyze
+
+    if: >
+      always()
+      && needs.prepare.outputs.should_run
+      == 'true'
+
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Download ticker reports
+        uses: actions/download-artifact@v4
+
+        with:
+
+          pattern: report-*
+
+          path: collected-reports
+
+          merge-multiple: false
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+
+        with:
+          python-version: "3.12"
+
+
+      - name: Install notification dependencies
+
+        run: |
+          pip install requests
+
+
+      - name: Send Gmail and DingTalk
+
+        if: >
+          github.event_name == 'schedule'
+          || github.event.inputs.notify == 'true'
+
+        env:
+
+          DINGTALK_WEBHOOK_URL: >
+            ${{ secrets.DINGTALK_WEBHOOK_URL }}
+
+          DINGTALK_SECRET: >
+            ${{ secrets.DINGTALK_SECRET }}
+
+          GMAIL_SENDER: >
+            ${{ secrets.GMAIL_SENDER }}
+
+          GMAIL_APP_PASSWORD: >
+            ${{ secrets.GMAIL_APP_PASSWORD }}
+
+          GMAIL_RECEIVER: >
+            ${{ secrets.GMAIL_RECEIVER }}
+
+        run: |
+
+          python scripts/notify_reports.py
+
+
+      - name: Upload combined reports
+
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: >
+            all-reports-${{ needs.prepare.outputs.analysis_date }}
+
+          path: |
+            collected-reports/
+            notification-output/
+
+          if-no-files-found: warn
+
+          retention-days: 30
