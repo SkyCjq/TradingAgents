@@ -88,17 +88,10 @@ jobs:
 
 
           DEFAULT_TICKERS = [
-              "GOOGL",
-              "MSFT",
-              "NIO",
-              "META",
-              "QQQ",
+              "VOO",
               "QQQM",
-              "NVO",
-              "LLY",
               "MSTR",
-              "SPCX",
-              "MU",
+              "PDD",
           ]
 
 
