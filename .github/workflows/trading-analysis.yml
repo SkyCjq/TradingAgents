@@ -55,6 +55,10 @@ jobs:
       analysis_date: ${{ steps.prepare.outputs.analysis_date }}
       matrix: ${{ steps.prepare.outputs.matrix }}
 
+      llm_provider: ${{ steps.llm.outputs.llm_provider }}
+      quick_model: ${{ steps.llm.outputs.quick_model }}
+      deep_model: ${{ steps.llm.outputs.deep_model }}
+    
     steps:
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -226,6 +230,86 @@ jobs:
               )
 
 
+      - name: Resolve LLM configuration
+        id: llm
+        shell: python
+
+        env:
+          ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+        run: |
+          import os
+
+
+          zhipu_key = os.environ.get(
+              "ZHIPU_CN_API_KEY",
+              "",
+          ).strip()
+
+          deepseek_key = os.environ.get(
+              "DEEPSEEK_API_KEY",
+              "",
+          ).strip()
+
+
+          if zhipu_key:
+              provider = "glm-cn"
+              quick_model = "glm-5.3-flash"
+              deep_model = "glm-5.3-flash"
+              credential = "ZHIPU_CN_API_KEY"
+
+          elif deepseek_key:
+              provider = "deepseek"
+              quick_model = "deepseek-v4-flash"
+              deep_model = "deepseek-v4-pro"
+              credential = "DEEPSEEK_API_KEY"
+
+          else:
+              raise SystemExit(
+                  "No supported LLM API key is configured. "
+                  "Set ZHIPU_CN_API_KEY or DEEPSEEK_API_KEY."
+              )
+
+
+          print(
+              f"Selected provider: {provider}"
+          )
+
+          print(
+              f"Quick model: {quick_model}"
+          )
+
+          print(
+              f"Deep model: {deep_model}"
+          )
+
+          print(
+              f"Credential source: {credential}"
+          )
+
+
+          output_path = os.environ[
+              "GITHUB_OUTPUT"
+          ]
+
+          with open(
+              output_path,
+              "a",
+              encoding="utf-8",
+          ) as output_file:
+              output_file.write(
+                  f"llm_provider={provider}\n"
+              )
+
+              output_file.write(
+                  f"quick_model={quick_model}\n"
+              )
+
+              output_file.write(
+                  f"deep_model={deep_model}\n"
+              )
+
   # ============================================================
   # 2. ANALYZE
   # ============================================================
@@ -261,8 +345,16 @@ jobs:
       #   ${{ secrets.DEEPSEEK_API_KEY }}
       #
       # Secret 必须保持单行。
+      #
+      # LLM credentials
+      #
+      # 两个映射都长期保留。
+      # Repository Secret 不存在时，其值为空字符串。
+      # Prepare job 会自动选择可用 provider。
       # --------------------------------------------------------
 
+      ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
+      
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -330,34 +422,74 @@ jobs:
       # Illegal header value
       # --------------------------------------------------------
 
-      - name: Validate DeepSeek configuration
+      - name: Validate selected LLM configuration
         shell: python
 
         env:
+          SELECTED_PROVIDER: ${{ needs.prepare.outputs.llm_provider }}
+
+          SELECTED_QUICK_MODEL: ${{ needs.prepare.outputs.quick_model }}
+
+          SELECTED_DEEP_MODEL: ${{ needs.prepare.outputs.deep_model }}
+
+          ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
+
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
         run: |
           import os
 
 
+          provider = os.environ.get(
+              "SELECTED_PROVIDER",
+              "",
+          ).strip()
+
+          quick_model = os.environ.get(
+              "SELECTED_QUICK_MODEL",
+              "",
+          ).strip()
+
+          deep_model = os.environ.get(
+              "SELECTED_DEEP_MODEL",
+              "",
+          ).strip()
+
+
+          key_mapping = {
+              "glm-cn": "ZHIPU_CN_API_KEY",
+              "deepseek": "DEEPSEEK_API_KEY",
+          }
+
+
+          key_name = key_mapping.get(
+              provider
+          )
+
+
+          if not key_name:
+              raise SystemExit(
+                  "Unsupported LLM provider: "
+                  f"{provider}"
+              )
+
+
           key = os.environ.get(
-              "DEEPSEEK_API_KEY",
+              key_name,
               "",
           )
 
 
           if not key:
               raise SystemExit(
-                  "DEEPSEEK_API_KEY "
-                  "is empty or missing."
+                  f"{key_name} is empty or missing."
               )
 
 
           if key != key.strip():
               raise SystemExit(
-                  "DEEPSEEK_API_KEY "
-                  "contains leading or "
-                  "trailing whitespace."
+                  f"{key_name} contains leading "
+                  "or trailing whitespace."
               )
 
 
@@ -374,15 +506,25 @@ jobs:
 
           if illegal_chars:
               raise SystemExit(
-                  "DEEPSEEK_API_KEY "
-                  "contains CR/LF/TAB "
-                  "characters."
+                  f"{key_name} contains "
+                  "CR/LF/TAB characters."
               )
 
 
           print(
-              "DeepSeek secret OK. "
-              f"Length={len(key)}"
+              f"Provider: {provider}"
+          )
+
+          print(
+              f"Quick model: {quick_model}"
+          )
+
+          print(
+              f"Deep model: {deep_model}"
+          )
+
+          print(
+              f"{key_name}: OK"
           )
 
 
