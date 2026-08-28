@@ -359,11 +359,19 @@ jobs:
 
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
 
-      TRADINGAGENTS_LLM_PROVIDER: deepseek
+      # --------------------------------------------------------
+      # LLM configuration
+      #
+      # 注意：
+      # 不再硬编码 DeepSeek。
+      # 全部使用 Prepare job 的选择结果。
+      # --------------------------------------------------------
 
-      TRADINGAGENTS_QUICK_THINK_LLM: deepseek-v4-flash
+      TRADINGAGENTS_LLM_PROVIDER: ${{ needs.prepare.outputs.llm_provider }}
 
-      TRADINGAGENTS_DEEP_THINK_LLM: deepseek-v4-pro
+      TRADINGAGENTS_QUICK_THINK_LLM: ${{ needs.prepare.outputs.quick_model }}
+
+      TRADINGAGENTS_DEEP_THINK_LLM: ${{ needs.prepare.outputs.deep_model }}
 
       TRADINGAGENTS_OUTPUT_LANGUAGE: Chinese
 
