@@ -26,7 +26,7 @@ on:
         default: true
 
   schedule:
-    - cron: "15 17 * * 4"
+    - cron: "20 17 * * 4"
       timezone: "America/New_York"
 
 
