@@ -25,10 +25,14 @@ on:
         type: boolean
         default: true
 
-  # v0.9:
-  # Five static post-market batches, Monday-Friday, New York time.
-  # Change batch START TIMES here in YAML.
-  # Change batch TICKERS / ENABLED batches in Repository Variables.
+  # v0.9 final:
+  # Monday-Friday, one fixed Batch per weekday, all at 17:20 ET.
+  #
+  # Monday    -> Batch 1
+  # Tuesday   -> Batch 2
+  # Wednesday -> Batch 3
+  # Thursday  -> Batch 4
+  # Friday    -> Batch 5
   schedule:
     - cron: "20 17 * * 1"
       timezone: "America/New_York"
@@ -51,10 +55,7 @@ permissions:
 
 
 concurrency:
-  # Different cron schedules get different concurrency groups.
-  # This prevents a long Batch N run from replacing another batch's pending run.
-  # Manual runs use github.run_id and therefore do not block scheduled batches.
-  group: tradingagents-${{ github.ref }}-${{ github.event_name }}-${{ github.event.schedule || github.run_id }}
+  group: tradingagents-daily-${{ github.ref }}
   cancel-in-progress: false
 
 
@@ -130,12 +131,25 @@ jobs:
           ]
 
 
+          # GitHub exposes the literal cron expression that triggered
+          # a scheduled workflow in github.event.schedule.
+          #
+          # This mapping intentionally keeps weekday -> Batch fixed:
+          #
+          # Monday    -> Batch 1
+          # Tuesday   -> Batch 2
+          # Wednesday -> Batch 3
+          # Thursday  -> Batch 4
+          # Friday    -> Batch 5
+          #
+          # NYSE holidays are skipped. There is no automatic catch-up
+          # or Batch shifting to the next trading day.
           SCHEDULE_TO_BATCH = {
-              "20 17 * * 1-5": "1",
-              "20 18 * * 1-5": "2",
-              "20 19 * * 1-5": "3",
-              "20 20 * * 1-5": "4",
-              "20 21 * * 1-5": "5",
+              "20 17 * * 1": "1",
+              "20 17 * * 2": "2",
+              "20 17 * * 3": "3",
+              "20 17 * * 4": "4",
+              "20 17 * * 5": "5",
           }
 
 
@@ -304,6 +318,13 @@ jobs:
               batch_schedule = (
                   event_schedule
               )
+
+              if not is_trading_day:
+                  print(
+                      "NYSE is closed on this date. "
+                      f"Batch {batch_id} is skipped and will not "
+                      "automatically move to another weekday."
+                  )
 
               if not batch_enabled:
                   print(
