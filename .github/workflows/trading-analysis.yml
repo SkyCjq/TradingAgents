@@ -25,8 +25,24 @@ on:
         type: boolean
         default: true
 
+  # v0.9:
+  # Five static post-market batches, Monday-Friday, New York time.
+  # Change batch START TIMES here in YAML.
+  # Change batch TICKERS / ENABLED batches in Repository Variables.
   schedule:
+    - cron: "20 17 * * 1"
+      timezone: "America/New_York"
+
+    - cron: "20 17 * * 2"
+      timezone: "America/New_York"
+
+    - cron: "20 17 * * 3"
+      timezone: "America/New_York"
+
     - cron: "20 17 * * 4"
+      timezone: "America/New_York"
+
+    - cron: "20 17 * * 5"
       timezone: "America/New_York"
 
 
@@ -35,7 +51,10 @@ permissions:
 
 
 concurrency:
-  group: tradingagents-daily-${{ github.ref }}
+  # Different cron schedules get different concurrency groups.
+  # This prevents a long Batch N run from replacing another batch's pending run.
+  # Manual runs use github.run_id and therefore do not block scheduled batches.
+  group: tradingagents-${{ github.ref }}-${{ github.event_name }}-${{ github.event.schedule || github.run_id }}
   cancel-in-progress: false
 
 
@@ -54,6 +73,8 @@ jobs:
       should_run: ${{ steps.prepare.outputs.should_run }}
       analysis_date: ${{ steps.prepare.outputs.analysis_date }}
       matrix: ${{ steps.prepare.outputs.matrix }}
+      batch_id: ${{ steps.prepare.outputs.batch_id }}
+      batch_schedule: ${{ steps.prepare.outputs.batch_schedule }}
 
       llm_provider: ${{ steps.llm.outputs.llm_provider }}
       quick_model: ${{ steps.llm.outputs.quick_model }}
@@ -77,9 +98,19 @@ jobs:
 
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+
           MANUAL_TICKERS: ${{ github.event.inputs.tickers }}
           MANUAL_DATE: ${{ github.event.inputs.analysis_date }}
           FORCE_RUN: ${{ github.event.inputs.force_run }}
+
+          TRADING_BATCHES_ENABLED: ${{ vars.TRADING_BATCHES_ENABLED }}
+
+          TRADING_BATCH_1_TICKERS: ${{ vars.TRADING_BATCH_1_TICKERS }}
+          TRADING_BATCH_2_TICKERS: ${{ vars.TRADING_BATCH_2_TICKERS }}
+          TRADING_BATCH_3_TICKERS: ${{ vars.TRADING_BATCH_3_TICKERS }}
+          TRADING_BATCH_4_TICKERS: ${{ vars.TRADING_BATCH_4_TICKERS }}
+          TRADING_BATCH_5_TICKERS: ${{ vars.TRADING_BATCH_5_TICKERS }}
 
         run: |
           import json
@@ -99,10 +130,85 @@ jobs:
           ]
 
 
+          SCHEDULE_TO_BATCH = {
+              "20 17 * * 1-5": "1",
+              "20 18 * * 1-5": "2",
+              "20 19 * * 1-5": "3",
+              "20 20 * * 1-5": "4",
+              "20 21 * * 1-5": "5",
+          }
+
+
+          BATCH_TICKER_ENV = {
+              "1": "TRADING_BATCH_1_TICKERS",
+              "2": "TRADING_BATCH_2_TICKERS",
+              "3": "TRADING_BATCH_3_TICKERS",
+              "4": "TRADING_BATCH_4_TICKERS",
+              "5": "TRADING_BATCH_5_TICKERS",
+          }
+
+
+          def parse_tickers(raw_value):
+              seen = set()
+              result = []
+
+              for item in raw_value.split(","):
+                  ticker = item.strip().upper()
+
+                  if not ticker:
+                      continue
+
+                  if ticker in seen:
+                      continue
+
+                  seen.add(ticker)
+                  result.append(ticker)
+
+              return result
+
+
+          def parse_enabled_batches(raw_value):
+              value = raw_value.strip().lower()
+
+              if value in ("", "none"):
+                  return set()
+
+              if value == "all":
+                  return {"1", "2", "3", "4", "5"}
+
+              enabled = {
+                  item.strip()
+                  for item
+                  in value.split(",")
+                  if item.strip()
+              }
+
+              invalid = sorted(
+                  item
+                  for item
+                  in enabled
+                  if item not in {"1", "2", "3", "4", "5"}
+              )
+
+              if invalid:
+                  raise SystemExit(
+                      "TRADING_BATCHES_ENABLED contains invalid "
+                      f"batch id(s): {invalid}. "
+                      "Use all, none, or comma-separated values 1-5."
+                  )
+
+              return enabled
+
+
           event_name = os.getenv(
               "EVENT_NAME",
               "",
-          )
+          ).strip()
+
+          event_schedule = os.getenv(
+              "EVENT_SCHEDULE",
+              "",
+          ).strip()
 
           manual_tickers = os.getenv(
               "MANUAL_TICKERS",
@@ -123,21 +229,8 @@ jobs:
           )
 
 
-          if manual_tickers:
-              tickers = [
-                  item.strip().upper()
-                  for item
-                  in manual_tickers.split(",")
-                  if item.strip()
-              ]
-          else:
-              tickers = DEFAULT_TICKERS
-
-
           if manual_date:
-              analysis_date = (
-                  manual_date
-              )
+              analysis_date = manual_date
           else:
               analysis_date = (
                   datetime.now(
@@ -166,15 +259,89 @@ jobs:
           )
 
 
-          if (
-              event_name
-              == "workflow_dispatch"
-              and force_run
-          ):
-              should_run = True
-          else:
+          if event_name == "schedule":
+              batch_id = SCHEDULE_TO_BATCH.get(
+                  event_schedule
+              )
+
+              if not batch_id:
+                  raise SystemExit(
+                      "Unsupported scheduled trigger: "
+                      f"{event_schedule!r}"
+                  )
+
+              enabled_batches = parse_enabled_batches(
+                  os.getenv(
+                      "TRADING_BATCHES_ENABLED",
+                      "none",
+                  )
+              )
+
+              ticker_env_name = (
+                  BATCH_TICKER_ENV[
+                      batch_id
+                  ]
+              )
+
+              tickers = parse_tickers(
+                  os.getenv(
+                      ticker_env_name,
+                      "",
+                  )
+              )
+
+              batch_enabled = (
+                  batch_id
+                  in enabled_batches
+              )
+
               should_run = (
                   is_trading_day
+                  and batch_enabled
+                  and bool(tickers)
+              )
+
+              batch_schedule = (
+                  event_schedule
+              )
+
+              if not batch_enabled:
+                  print(
+                      "Scheduled batch is disabled: "
+                      f"Batch {batch_id}"
+                  )
+
+              if batch_enabled and not tickers:
+                  print(
+                      "::warning::"
+                      f"{ticker_env_name} is empty; "
+                      f"Batch {batch_id} will be skipped."
+                  )
+
+          elif event_name == "workflow_dispatch":
+              batch_id = "manual"
+              batch_schedule = "manual"
+
+              if manual_tickers:
+                  tickers = parse_tickers(
+                      manual_tickers
+                  )
+              else:
+                  tickers = (
+                      DEFAULT_TICKERS
+                  )
+
+              if force_run:
+                  should_run = True
+              else:
+                  should_run = (
+                      is_trading_day
+                  )
+
+          else:
+              raise SystemExit(
+                  "Unsupported GitHub event: "
+                  f"{event_name!r}"
               )
 
 
@@ -182,6 +349,26 @@ jobs:
               "ticker": tickers,
           }
 
+
+          print(
+              f"Event name: "
+              f"{event_name}"
+          )
+
+          print(
+              f"Event schedule: "
+              f"{event_schedule or 'N/A'}"
+          )
+
+          print(
+              f"Batch ID: "
+              f"{batch_id}"
+          )
+
+          print(
+              f"Batch schedule: "
+              f"{batch_schedule}"
+          )
 
           print(
               f"Analysis date: "
@@ -229,9 +416,20 @@ jobs:
                   + "\n"
               )
 
+              output_file.write(
+                  f"batch_id="
+                  f"{batch_id}\n"
+              )
+
+              output_file.write(
+                  f"batch_schedule="
+                  f"{batch_schedule}\n"
+              )
+
 
       - name: Resolve LLM configuration
         id: llm
+        if: steps.prepare.outputs.should_run == 'true'
         shell: python
 
         env:
@@ -602,7 +800,7 @@ jobs:
         uses: actions/upload-artifact@v6
 
         with:
-          name: report-${{ matrix.ticker }}-${{ needs.prepare.outputs.analysis_date }}
+          name: report-${{ needs.prepare.outputs.batch_id }}-${{ matrix.ticker }}-${{ needs.prepare.outputs.analysis_date }}
 
           path: reports/${{ matrix.ticker }}/
 
@@ -806,7 +1004,7 @@ jobs:
         uses: actions/upload-artifact@v6
 
         with:
-          name: all-reports-${{ needs.prepare.outputs.analysis_date }}
+          name: all-reports-${{ needs.prepare.outputs.batch_id }}-${{ needs.prepare.outputs.analysis_date }}
 
           path: |
             collected-reports/
