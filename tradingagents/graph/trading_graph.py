@@ -357,6 +357,9 @@ class TradingAgentsGraph:
             f"debate={self.config['max_debate_rounds']}",
             f"risk={self.config['max_risk_discuss_rounds']}",
             f"asset={asset_type}",
+            f"provider={self.config['llm_provider']}",
+            f"quick={self.config['quick_think_llm']}",
+            f"deep={self.config['deep_think_llm']}",
         ])
 
     def propagate(self, company_name, trade_date, asset_type: str = "stock"):
