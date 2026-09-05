@@ -14,11 +14,12 @@ _CUSTOM_ONLY: dict[str, list[ModelOption]] = {
 
 
 # Shared model list for GLM via Z.AI (international) and BigModel (China).
-# Source: docs.z.ai (GLM Coding Plan supported models + LLM guides).
+# Source: docs.z.ai and docs.bigmodel.cn official GLM model guides.
 # All GLM 4.7+ entries support thinking mode via thinking={"type":"enabled"}.
 _GLM_MODELS: dict[str, list[ModelOption]] = {
     "quick": [
         ("GLM-5-Turbo - Fast, switchable thinking modes", "glm-5-turbo"),
+        ("GLM-4.7-Flash - Free, efficient agentic model", "glm-4.7-flash"),
         ("GLM-4.7 - Previous-gen flagship", "glm-4.7"),
         ("GLM-4.5-Air - Lightweight, cost-efficient", "glm-4.5-air"),
         ("Custom model ID", "custom"),
@@ -27,6 +28,7 @@ _GLM_MODELS: dict[str, list[ModelOption]] = {
         ("GLM-5.2 - Latest flagship, 1M ctx", "glm-5.2"),
         ("GLM-5.1 - 745B, 200K ctx", "glm-5.1"),
         ("GLM-5 - Flagship, 204K ctx", "glm-5"),
+        ("GLM-4.7-Flash - Free, efficient agentic model", "glm-4.7-flash"),
         ("GLM-4.7 - Previous-gen flagship", "glm-4.7"),
         ("Custom model ID", "custom"),
     ],
