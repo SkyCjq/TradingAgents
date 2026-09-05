@@ -455,7 +455,7 @@ jobs:
         shell: python
 
         env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
           ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -465,8 +465,8 @@ jobs:
           import os
 
 
-          google_key = os.environ.get(
-              "GOOGLE_API_KEY",
+          google_credentials_raw = os.environ.get(
+              "GOOGLE_CREDENTIALS_JSON",
               "",
           ).strip()
 
@@ -474,6 +474,47 @@ jobs:
               "GOOGLE_CLOUD_PROJECT",
               "",
           ).strip()
+
+          google_credentials_valid = False
+
+          if google_credentials_raw:
+              try:
+                  google_credentials = json.loads(
+                      google_credentials_raw
+                  )
+              except json.JSONDecodeError:
+                  print(
+                      "::warning::GOOGLE_CREDENTIALS_JSON "
+                      "is not valid JSON. "
+                      "Google Priority 0 will be skipped."
+                  )
+              else:
+                  required_fields = (
+                      "client_email",
+                      "private_key",
+                  )
+
+                  google_credentials_valid = (
+                      google_credentials.get(
+                          "type"
+                      )
+                      == "service_account"
+                      and all(
+                          google_credentials.get(
+                              field
+                          )
+                          for field
+                          in required_fields
+                      )
+                  )
+
+                  if not google_credentials_valid:
+                      print(
+                          "::warning::GOOGLE_CREDENTIALS_JSON "
+                          "is not a valid service-account "
+                          "credential. Google Priority 0 "
+                          "will be skipped."
+                      )
 
           zhipu_key = os.environ.get(
               "ZHIPU_CN_API_KEY",
@@ -488,20 +529,38 @@ jobs:
 
           provider_plan = []
 
-          if google_key and google_project:
+          if (
+              google_credentials_valid
+              and google_project
+          ):
               provider_plan.append(
                   {
                       "provider": "google",
                       "quick_model": "gemini-3.5-flash",
                       "deep_model": "gemini-3.5-flash",
-                      "credential": "GOOGLE_API_KEY",
+                      "credential": "GOOGLE_CREDENTIALS_JSON",
                   }
               )
 
-          elif google_key and not google_project:
+          elif (
+              google_credentials_valid
+              and not google_project
+          ):
               print(
-                  "::warning::GOOGLE_API_KEY is configured, "
-                  "but GOOGLE_CLOUD_PROJECT is empty. "
+                  "::warning::GOOGLE_CREDENTIALS_JSON "
+                  "is configured, but "
+                  "GOOGLE_CLOUD_PROJECT is empty. "
+                  "Google Priority 0 will be skipped."
+              )
+
+          elif (
+              google_project
+              and not google_credentials_raw
+          ):
+              print(
+                  "::warning::GOOGLE_CLOUD_PROJECT "
+                  "is configured, but "
+                  "GOOGLE_CREDENTIALS_JSON is empty. "
                   "Google Priority 0 will be skipped."
               )
 
@@ -529,7 +588,8 @@ jobs:
           if not provider_plan:
               raise SystemExit(
                   "No usable LLM provider is configured. "
-                  "Google requires GOOGLE_API_KEY plus "
+                  "Google Vertex AI requires "
+                  "GOOGLE_CREDENTIALS_JSON plus "
                   "GOOGLE_CLOUD_PROJECT; otherwise set "
                   "ZHIPU_CN_API_KEY or DEEPSEEK_API_KEY."
               )
@@ -653,8 +713,6 @@ jobs:
       # Prepare job 会自动选择可用 provider。
       # --------------------------------------------------------
 
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-
       GOOGLE_GENAI_USE_VERTEXAI: "true"
 
       GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
@@ -701,6 +759,30 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v6
+
+
+      # --------------------------------------------------------
+      # Google Cloud ADC
+      #
+      # Vertex AI requires Application Default Credentials.
+      # Service-account JSON is converted into a temporary
+      # credentials file by the official Google auth action.
+      #
+      # continue-on-error is intentional: if Google auth fails,
+      # the runner classifies the resulting Google auth error as
+      # a provider failure and restarts the ticker with GLM.
+      # --------------------------------------------------------
+
+      - name: Authenticate to Google Cloud
+        id: google_auth
+        if: ${{ contains(needs.prepare.outputs.provider_plan, '"provider":"google"') }}
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          create_credentials_file: true
+          export_environment_variables: true
 
 
       # --------------------------------------------------------
@@ -752,7 +834,7 @@ jobs:
 
           PROVIDER_PLAN: ${{ needs.prepare.outputs.provider_plan }}
 
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
 
           GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
@@ -789,7 +871,6 @@ jobs:
 
 
           key_mapping = {
-              "google": "GOOGLE_API_KEY",
               "glm-cn": "ZHIPU_CN_API_KEY",
               "deepseek": "DEEPSEEK_API_KEY",
           }
@@ -815,6 +896,68 @@ jobs:
                   "provider",
                   "",
               )
+
+              if current_provider == "google":
+                  google_project = os.environ.get(
+                      "GOOGLE_CLOUD_PROJECT",
+                      "",
+                  ).strip()
+
+                  credentials_raw = os.environ.get(
+                      "GOOGLE_CREDENTIALS_JSON",
+                      "",
+                  ).strip()
+
+                  if not google_project:
+                      raise SystemExit(
+                          "GOOGLE_CLOUD_PROJECT is empty "
+                          "for Google Vertex AI."
+                      )
+
+                  if not credentials_raw:
+                      raise SystemExit(
+                          "GOOGLE_CREDENTIALS_JSON is empty "
+                          "for Google Vertex AI."
+                      )
+
+                  try:
+                      credentials = json.loads(
+                          credentials_raw
+                      )
+                  except json.JSONDecodeError as exc:
+                      raise SystemExit(
+                          "GOOGLE_CREDENTIALS_JSON is not "
+                          "valid JSON."
+                      ) from exc
+
+                  if (
+                      credentials.get("type")
+                      != "service_account"
+                      or not credentials.get(
+                          "client_email"
+                      )
+                      or not credentials.get(
+                          "private_key"
+                      )
+                  ):
+                      raise SystemExit(
+                          "GOOGLE_CREDENTIALS_JSON is not "
+                          "a valid service-account credential."
+                      )
+
+                  print(
+                      "Google backend: Vertex AI, "
+                      f"project={google_project}, "
+                      "location=global, ADC=service-account"
+                  )
+
+                  print(
+                      "google: "
+                      "GOOGLE_CREDENTIALS_JSON OK"
+                  )
+
+                  continue
+
 
               key_name = key_mapping.get(
                   current_provider
@@ -862,25 +1005,6 @@ jobs:
                   raise SystemExit(
                       f"{key_name} contains "
                       "CR/LF/TAB characters."
-                  )
-
-
-              if current_provider == "google":
-                  google_project = os.environ.get(
-                      "GOOGLE_CLOUD_PROJECT",
-                      "",
-                  ).strip()
-
-                  if not google_project:
-                      raise SystemExit(
-                          "GOOGLE_CLOUD_PROJECT is empty "
-                          "for Google Vertex AI."
-                      )
-
-                  print(
-                      "Google backend: Vertex AI, "
-                      f"project={google_project}, "
-                      "location=global"
                   )
 
 
