@@ -80,6 +80,7 @@ jobs:
       llm_provider: ${{ steps.llm.outputs.llm_provider }}
       quick_model: ${{ steps.llm.outputs.quick_model }}
       deep_model: ${{ steps.llm.outputs.deep_model }}
+      provider_plan: ${{ steps.llm.outputs.provider_plan }}
     
     steps:
       - name: Setup Python
@@ -454,12 +455,25 @@ jobs:
         shell: python
 
         env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
           ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
         run: |
+          import json
           import os
 
+
+          google_key = os.environ.get(
+              "GOOGLE_API_KEY",
+              "",
+          ).strip()
+
+          google_project = os.environ.get(
+              "GOOGLE_CLOUD_PROJECT",
+              "",
+          ).strip()
 
           zhipu_key = os.environ.get(
               "ZHIPU_CN_API_KEY",
@@ -472,27 +486,76 @@ jobs:
           ).strip()
 
 
+          provider_plan = []
+
+          if google_key and google_project:
+              provider_plan.append(
+                  {
+                      "provider": "google",
+                      "quick_model": "gemini-3.5-flash",
+                      "deep_model": "gemini-3.5-flash",
+                      "credential": "GOOGLE_API_KEY",
+                  }
+              )
+
+          elif google_key and not google_project:
+              print(
+                  "::warning::GOOGLE_API_KEY is configured, "
+                  "but GOOGLE_CLOUD_PROJECT is empty. "
+                  "Google Priority 0 will be skipped."
+              )
+
           if zhipu_key:
-              provider = "glm-cn"
-              quick_model = "glm-5.3-flash"
-              deep_model = "glm-5.3-flash"
-              credential = "ZHIPU_CN_API_KEY"
+              provider_plan.append(
+                  {
+                      "provider": "glm-cn",
+                      "quick_model": "glm-4.7-flash",
+                      "deep_model": "glm-4.7-flash",
+                      "credential": "ZHIPU_CN_API_KEY",
+                  }
+              )
 
-          elif deepseek_key:
-              provider = "deepseek"
-              quick_model = "deepseek-v4-flash"
-              deep_model = "deepseek-v4-pro"
-              credential = "DEEPSEEK_API_KEY"
-
-          else:
-              raise SystemExit(
-                  "No supported LLM API key is configured. "
-                  "Set ZHIPU_CN_API_KEY or DEEPSEEK_API_KEY."
+          if deepseek_key:
+              provider_plan.append(
+                  {
+                      "provider": "deepseek",
+                      "quick_model": "deepseek-v4-flash",
+                      "deep_model": "deepseek-v4-pro",
+                      "credential": "DEEPSEEK_API_KEY",
+                  }
               )
 
 
+          if not provider_plan:
+              raise SystemExit(
+                  "No usable LLM provider is configured. "
+                  "Google requires GOOGLE_API_KEY plus "
+                  "GOOGLE_CLOUD_PROJECT; otherwise set "
+                  "ZHIPU_CN_API_KEY or DEEPSEEK_API_KEY."
+              )
+
+
+          primary = provider_plan[0]
+
+          provider = primary[
+              "provider"
+          ]
+
+          quick_model = primary[
+              "quick_model"
+          ]
+
+          deep_model = primary[
+              "deep_model"
+          ]
+
+          credential = primary[
+              "credential"
+          ]
+
+
           print(
-              f"Selected provider: {provider}"
+              f"Primary provider: {provider}"
           )
 
           print(
@@ -505,6 +568,15 @@ jobs:
 
           print(
               f"Credential source: {credential}"
+          )
+
+          print(
+              "Runtime provider order: "
+              + " -> ".join(
+                  item["provider"]
+                  for item
+                  in provider_plan
+              )
           )
 
 
@@ -527,6 +599,15 @@ jobs:
 
               output_file.write(
                   f"deep_model={deep_model}\n"
+              )
+
+              output_file.write(
+                  "provider_plan="
+                  + json.dumps(
+                      provider_plan,
+                      separators=(",", ":"),
+                  )
+                  + "\n"
               )
 
   # ============================================================
@@ -567,10 +648,18 @@ jobs:
       #
       # LLM credentials
       #
-      # 两个映射都长期保留。
+      # Google / GLM / DeepSeek 三个映射长期保留。
       # Repository Secret 不存在时，其值为空字符串。
       # Prepare job 会自动选择可用 provider。
       # --------------------------------------------------------
+
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+      GOOGLE_GENAI_USE_VERTEXAI: "true"
+
+      GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      GOOGLE_CLOUD_LOCATION: "global"
 
       ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
       
@@ -591,6 +680,8 @@ jobs:
       TRADINGAGENTS_QUICK_THINK_LLM: ${{ needs.prepare.outputs.quick_model }}
 
       TRADINGAGENTS_DEEP_THINK_LLM: ${{ needs.prepare.outputs.deep_model }}
+
+      TRADINGAGENTS_PROVIDER_PLAN: ${{ needs.prepare.outputs.provider_plan }}
 
       TRADINGAGENTS_OUTPUT_LANGUAGE: Chinese
 
@@ -659,11 +750,18 @@ jobs:
 
           SELECTED_DEEP_MODEL: ${{ needs.prepare.outputs.deep_model }}
 
+          PROVIDER_PLAN: ${{ needs.prepare.outputs.provider_plan }}
+
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
           ZHIPU_CN_API_KEY: ${{ secrets.ZHIPU_CN_API_KEY }}
 
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
         run: |
+          import json
           import os
 
 
@@ -682,64 +780,118 @@ jobs:
               "",
           ).strip()
 
+          provider_plan = json.loads(
+              os.environ.get(
+                  "PROVIDER_PLAN",
+                  "[]",
+              )
+          )
+
 
           key_mapping = {
+              "google": "GOOGLE_API_KEY",
               "glm-cn": "ZHIPU_CN_API_KEY",
               "deepseek": "DEEPSEEK_API_KEY",
           }
 
 
-          key_name = key_mapping.get(
-              provider
-          )
-
-
-          if not key_name:
+          if not provider_plan:
               raise SystemExit(
-                  "Unsupported LLM provider: "
-                  f"{provider}"
+                  "Runtime provider plan is empty."
               )
 
 
-          key = os.environ.get(
-              key_name,
-              "",
-          )
-
-
-          if not key:
+          if provider_plan[0].get(
+              "provider"
+          ) != provider:
               raise SystemExit(
-                  f"{key_name} is empty or missing."
+                  "Primary provider does not match "
+                  "the first runtime provider."
               )
 
 
-          if key != key.strip():
-              raise SystemExit(
-                  f"{key_name} contains leading "
-                  "or trailing whitespace."
+          for item in provider_plan:
+              current_provider = item.get(
+                  "provider",
+                  "",
+              )
+
+              key_name = key_mapping.get(
+                  current_provider
               )
 
 
-          illegal_chars = [
-              char
-              for char in (
-                  "\r",
-                  "\n",
-                  "\t",
+              if not key_name:
+                  raise SystemExit(
+                      "Unsupported LLM provider: "
+                      f"{current_provider}"
+                  )
+
+
+              key = os.environ.get(
+                  key_name,
+                  "",
               )
-              if char in key
-          ]
 
 
-          if illegal_chars:
-              raise SystemExit(
-                  f"{key_name} contains "
-                  "CR/LF/TAB characters."
+              if not key:
+                  raise SystemExit(
+                      f"{key_name} is empty or missing."
+                  )
+
+
+              if key != key.strip():
+                  raise SystemExit(
+                      f"{key_name} contains leading "
+                      "or trailing whitespace."
+                  )
+
+
+              illegal_chars = [
+                  char
+                  for char in (
+                      "\r",
+                      "\n",
+                      "\t",
+                  )
+                  if char in key
+              ]
+
+
+              if illegal_chars:
+                  raise SystemExit(
+                      f"{key_name} contains "
+                      "CR/LF/TAB characters."
+                  )
+
+
+              if current_provider == "google":
+                  google_project = os.environ.get(
+                      "GOOGLE_CLOUD_PROJECT",
+                      "",
+                  ).strip()
+
+                  if not google_project:
+                      raise SystemExit(
+                          "GOOGLE_CLOUD_PROJECT is empty "
+                          "for Google Vertex AI."
+                      )
+
+                  print(
+                      "Google backend: Vertex AI, "
+                      f"project={google_project}, "
+                      "location=global"
+                  )
+
+
+              print(
+                  f"{current_provider}: "
+                  f"{key_name} OK"
               )
 
 
           print(
-              f"Provider: {provider}"
+              f"Primary provider: {provider}"
           )
 
           print(
@@ -751,7 +903,12 @@ jobs:
           )
 
           print(
-              f"{key_name}: OK"
+              "Runtime provider order: "
+              + " -> ".join(
+                  item["provider"]
+                  for item
+                  in provider_plan
+              )
           )
 
 
