@@ -24,6 +24,7 @@ PROVIDER_EXCEPTION_MODULE_PREFIXES = (
     "openai",
     "langchain_openai",
     "google.api_core",
+    "google.auth",
     "google.genai",
     "langchain_google_genai",
 )
@@ -41,6 +42,7 @@ PROVIDER_EXCEPTION_NAME_TOKENS = (
     "internalserver",
     "timeout",
     "connection",
+    "credential",
 )
 
 PROVIDER_TRACEBACK_HINTS = (
@@ -49,6 +51,7 @@ PROVIDER_TRACEBACK_HINTS = (
     "langchain_google_genai/",
     "/openai/",
     "/google/api_core/",
+    "/google/auth/",
     "/google/genai/",
 )
 
@@ -439,6 +442,8 @@ def is_llm_provider_failure(
                     "service unavailable",
                     "permission denied",
                     "unauthenticated",
+                    "credentials",
+                    "application default credentials",
                     "余额不足",
                     "资源包",
                 )
