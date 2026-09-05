@@ -14,7 +14,6 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.reporting import write_report_tree
 
-
 SUPPORTED_RUNTIME_PROVIDERS = {
     "google",
     "glm-cn",
