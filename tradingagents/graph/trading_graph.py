@@ -352,14 +352,27 @@ class TradingAgentsGraph:
         selection, debate/risk depth, or asset mode starts fresh instead of
         silently continuing the previous graph (#1089).
         """
+        provider = self.config.get(
+            "llm_provider",
+            "<unset>",
+        )
+        quick_model = self.config.get(
+            "quick_think_llm",
+            "<unset>",
+        )
+        deep_model = self.config.get(
+            "deep_think_llm",
+            "<unset>",
+        )
+
         return "|".join([
             "analysts=" + ",".join(self.selected_analysts),
             f"debate={self.config['max_debate_rounds']}",
             f"risk={self.config['max_risk_discuss_rounds']}",
             f"asset={asset_type}",
-            f"provider={self.config['llm_provider']}",
-            f"quick={self.config['quick_think_llm']}",
-            f"deep={self.config['deep_think_llm']}",
+            f"provider={provider}",
+            f"quick={quick_model}",
+            f"deep={deep_model}",
         ])
 
     def propagate(self, company_name, trade_date, asset_type: str = "stock"):
